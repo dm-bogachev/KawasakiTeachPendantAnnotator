@@ -22,6 +22,8 @@ GRID = {
     "y_rows": [(191, 271), (271, 351), (351, 431), (431, 510)],
     "cols": 7, "rows": 4
 }
+NOMINAL_PANEL_WIDTH = 642
+NOMINAL_PANEL_HEIGHT = 512
 APP_VERSION = 1
 
 
@@ -68,7 +70,7 @@ class ImageCanvas(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(642, 512)
+        self.setMinimumSize(NOMINAL_PANEL_WIDTH, NOMINAL_PANEL_HEIGHT)
         self.pixmap = QPixmap()
         self.elements = {}
         self.selected_key = None
@@ -78,9 +80,24 @@ class ImageCanvas(QWidget):
         self.drag_end = None
         self.setMouseTracking(True)
 
+    @staticmethod
+    def normalized_pixmap(pix):
+        if pix.isNull():
+            return False, "Не удалось открыть изображение."
+        width, height = pix.width(), pix.height()
+        if width < NOMINAL_PANEL_WIDTH or height < NOMINAL_PANEL_HEIGHT:
+            return False, (
+                f"Изображение слишком маленькое: {width}×{height}. "
+                f"Минимальный размер — {NOMINAL_PANEL_WIDTH}×{NOMINAL_PANEL_HEIGHT}."
+            )
+        if width > NOMINAL_PANEL_WIDTH or height > NOMINAL_PANEL_HEIGHT:
+            pix = pix.scaled(NOMINAL_PANEL_WIDTH, NOMINAL_PANEL_HEIGHT, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        return True, pix
+
     def set_image(self, path):
         pix = QPixmap(path)
-        if pix.isNull():
+        ok, pix = self.normalized_pixmap(pix)
+        if not ok:
             return False
         self.pixmap = pix
         self.updateGeometry()
@@ -88,7 +105,8 @@ class ImageCanvas(QWidget):
         return True
 
     def set_pixmap(self, pix):
-        if pix.isNull():
+        ok, pix = self.normalized_pixmap(pix)
+        if not ok:
             return False
         self.pixmap = pix
         self.updateGeometry()
@@ -394,12 +412,18 @@ class MainWindow(QMainWindow):
 
     def open_image(self):
         path, _ = QFileDialog.getOpenFileName(self, "Выберите изображение", "", "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)")
-        if path:
-            if self.canvas.set_image(path):
-                self.image_path = os.path.abspath(path)
-                self.statusBar().showMessage(f"Изображение загружено: {Path(path).name}")
-            else:
-                QMessageBox.warning(self, "Ошибка", "Не удалось открыть изображение.")
+        if not path:
+            return
+        pix = QPixmap(path)
+        ok, result = self.canvas.normalized_pixmap(pix)
+        if not ok:
+            QMessageBox.warning(self, "Ошибка размера изображения", result)
+            return
+        if self.canvas.set_pixmap(result):
+            self.image_path = os.path.abspath(path)
+            self.statusBar().showMessage(f"Изображение загружено: {Path(path).name} ({result.width()}×{result.height()})")
+        else:
+            QMessageBox.warning(self, "Ошибка", "Не удалось открыть изображение.")
 
     def paste_image(self):
         pix = QGuiApplication.clipboard().pixmap()
@@ -410,9 +434,17 @@ class MainWindow(QMainWindow):
         if pix.isNull():
             QMessageBox.information(self, "Буфер обмена", "В буфере обмена не найдено изображение.")
             return
-        self.canvas.set_pixmap(pix)
-        self.image_path = None
-        self.statusBar().showMessage(f"Изображение вставлено из буфера ({pix.width()}×{pix.height()}); при сохранении проекта оно будет встроено.")
+        ok, result = self.canvas.normalized_pixmap(pix)
+        if not ok:
+            QMessageBox.warning(self, "Ошибка размера изображения", result)
+            return
+        if self.canvas.set_pixmap(result):
+            self.image_path = None
+            self.statusBar().showMessage(
+                f"Изображение вставлено из буфера ({result.width()}×{result.height()}); при сохранении проекта оно будет встроено."
+            )
+        else:
+            QMessageBox.warning(self, "Ошибка", "Не удалось открыть изображение.")
 
     def edit_element(self, key):
         if key not in self.elements:
